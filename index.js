@@ -12,39 +12,46 @@ if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK) {
 
 const bot = new Telegraf(BOT_TOKEN)
 
-// === Функция для разбора сообщений ===
+// === Функция для разбора входящих сообщений ===
 function parseLead(text) {
+  // разделяем по | ; , и пробелам
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
-  if (parts.length < 5) return null
-  const [name, phoneRaw, idRaw, amountRaw, bank] = parts
+  if (parts.length < 4) return null
+
+  const [bank, phoneRaw, account, sumRaw] = parts
   const phone = phoneRaw.replace(/[^\d\+]/g, '')
-  const id = String(idRaw).trim()
-  const amount = Number(String(amountRaw).replace(',', '.'))
-  if (!name || !phone || Number.isNaN(amount) || !bank) return null
-  return { name, phone, id, amount, bank }
+  const sum = String(sumRaw).trim()
+
+  if (!bank || !phone || !account || !sum) return null
+  return { bank, phone, account, sum }
 }
 
 // === Команда /start ===
 bot.start(ctx => {
   ctx.reply(
     'Привет! Отправь данные в формате:\n' +
-    'Имя | Номер | ID | Сумма | Банк\n\n' +
-    'Пример:\nИван Иванов | +79998887766 | 102 | 270 | Сбербанк'
+    'Банк | Номер | Счёт | Сумма\n\n' +
+    'Пример:\nСбербанк | +79998887766 | 102 | 270'
   )
 })
 
-// === Обработка всех сообщений ===
+// === Обработка всех текстовых сообщений ===
 bot.on('text', async ctx => {
   const parsed = parseLead(ctx.message.text)
   if (!parsed) {
-    return ctx.reply('Формат неверный. Пример:\nИван Иванов | +79998887766 | 102 | 270 | Сбербанк')
+    return ctx.reply('Формат неверный. Пример:\nСбербанк | +79998887766 | 102 | 270')
   }
 
-  const { name, phone, id, amount, bank } = parsed
+  const { bank, phone, account, sum } = parsed
+
+  // === Формируем payload для Chatterfy ===
   const payload = {
-    name,
-    phone,
-    custom_fields: { id, amount, bank }
+    fields: {
+      "bank name": bank,
+      "number": phone,
+      "account": account,
+      "sum": sum
+    }
   }
 
   try {
@@ -56,20 +63,21 @@ bot.on('text', async ctx => {
   }
 })
 
-// === Запуск сервера ===
+// === Запуск express-сервера ===
 const app = express()
 
-// Telegram webhook (POST)
+// POST-запросы от Telegram
 app.use(bot.webhookCallback('/telegram-webhook'))
 
-// Telegram webhook (GET) — чтобы Telegram не получал 404
+// GET-запрос — чтобы Telegram не получал 404
 app.get('/telegram-webhook', (req, res) => {
   res.status(200).send('OK')
 })
 
-// Проверочный маршрут
+// Проверка, что сервер жив
 app.get('/', (_, res) => res.send('OK'))
 
+// === Запуск сервера ===
 app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`)
   const webhookUrl = `${PUBLIC_URL}/telegram-webhook`
@@ -80,4 +88,3 @@ app.listen(PORT, async () => {
     console.error('Ошибка при установке webhook:', err.message)
   }
 })
-
