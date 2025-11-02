@@ -12,6 +12,7 @@ if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK) {
 
 const bot = new Telegraf(BOT_TOKEN)
 
+// === Функция для разбора сообщений ===
 function parseLead(text) {
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
   if (parts.length < 5) return null
@@ -23,6 +24,7 @@ function parseLead(text) {
   return { name, phone, id, amount, bank }
 }
 
+// === Команда /start ===
 bot.start(ctx => {
   ctx.reply(
     'Привет! Отправь данные в формате:\n' +
@@ -31,17 +33,20 @@ bot.start(ctx => {
   )
 })
 
+// === Обработка всех сообщений ===
 bot.on('text', async ctx => {
   const parsed = parseLead(ctx.message.text)
   if (!parsed) {
     return ctx.reply('Формат неверный. Пример:\nИван Иванов | +79998887766 | 102 | 270 | Сбербанк')
   }
+
   const { name, phone, id, amount, bank } = parsed
   const payload = {
     name,
     phone,
     custom_fields: { id, amount, bank }
   }
+
   try {
     await axios.post(CHATTERFY_WEBHOOK, payload, { timeout: 10000 })
     await ctx.reply('✅ Данные отправлены в Chatterfy.')
@@ -51,17 +56,28 @@ bot.on('text', async ctx => {
   }
 })
 
+// === Запуск сервера ===
 const app = express()
+
+// Telegram webhook (POST)
 app.use(bot.webhookCallback('/telegram-webhook'))
+
+// Telegram webhook (GET) — чтобы Telegram не получал 404
+app.get('/telegram-webhook', (req, res) => {
+  res.status(200).send('OK')
+})
+
+// Проверочный маршрут
 app.get('/', (_, res) => res.send('OK'))
 
 app.listen(PORT, async () => {
-  console.log(`Server running on port ${PORT}`)
+  console.log(`✅ Server running on port ${PORT}`)
   const webhookUrl = `${PUBLIC_URL}/telegram-webhook`
   try {
     await bot.telegram.setWebhook(webhookUrl)
-    console.log('Telegram webhook установлен:', webhookUrl)
+    console.log(`🤖 Telegram webhook установлен: ${webhookUrl}`)
   } catch (err) {
     console.error('Ошибка при установке webhook:', err.message)
   }
 })
+
