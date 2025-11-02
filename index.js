@@ -64,4 +64,69 @@ function parseLead(text) {
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
   if (parts.length < 4) return null
   const [bank, phoneRaw, account, sumRaw] = parts
-  const phone = phoneRaw.replace(/
+  const phone = phoneRaw.replace(/[^\d\+]/g, '') // <-- исправлено
+  const sum = String(sumRaw).trim()
+  return { bank, phone, account, sum }
+}
+
+// === /start ===
+bot.start(ctx => {
+  ctx.reply(
+    'Привет! Отправь данные в формате:\n' +
+    'Банк | Номер | Счёт | Сумма\n\n' +
+    'Пример:\nСбербанк | +79998887766 | 102 | 270'
+  )
+})
+
+// === Обработка текстовых сообщений ===
+bot.on('text', async ctx => {
+  const parsed = parseLead(ctx.message.text)
+  if (!parsed) {
+    return ctx.reply('Формат неверный. Пример:\nСбербанк | +79998887766 | 102 | 270')
+  }
+
+  const { bank, phone, account, sum } = parsed
+  await ctx.reply('⏳ Загружаю список пользователей из Google Sheets...')
+
+  const allChatIds = await getAllChatIds()
+  if (!allChatIds.length) {
+    return ctx.reply('⚠️ Не найдено ни одного Chat ID в Google Sheets.')
+  }
+
+  await ctx.reply(`📤 Найдено ${allChatIds.length} пользователей. Начинаю обновление...`)
+
+  let success = 0
+  for (const chatId of allChatIds) {
+    const url = `${CHATTERFY_WEBHOOK}?chatId=${chatId}` +
+                `&fields.bank%20name=${encodeURIComponent(bank)}` +
+                `&fields.number=${encodeURIComponent(phone)}` +
+                `&fields.account=${encodeURIComponent(account)}` +
+                `&fields.sum=${encodeURIComponent(sum)}`
+    try {
+      await axios.get(url)
+      console.log(`✅ Обновлён chatId: ${chatId}`)
+      success++
+    } catch (err) {
+      console.error(`❌ Ошибка для chatId ${chatId}:`, err.message)
+    }
+  }
+
+  ctx.reply(`✅ Успешно обновлено ${success} пользователей из ${allChatIds.length}.`)
+})
+
+// === Express сервер ===
+app.use(bot.webhookCallback('/telegram-webhook'))
+app.get('/telegram-webhook', (_, res) => res.send('OK')) // важно: чтобы Telegram видел ответ
+app.get('/', (_, res) => res.send('OK'))
+
+// === Запуск сервера ===
+app.listen(PORT, async () => {
+  console.log(`✅ Server running on port ${PORT}`)
+  const webhookUrl = `${PUBLIC_URL}/telegram-webhook`
+  try {
+    await bot.telegram.setWebhook(webhookUrl)
+    console.log(`🤖 Telegram webhook установлен: ${webhookUrl}`)
+  } catch (err) {
+    console.error('Ошибка при установке webhook:', err.message)
+  }
+})
