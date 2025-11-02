@@ -26,14 +26,15 @@ async function getAllChatIds() {
   try {
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'C2:C1000' // читаем все строки после заголовка
+      range: 'C:C' // читаем всю колонку C
     })
 
-    const raw = res.data.values || []
-    const validIds = raw
+    console.log('🧾 Ответ от Google Sheets:', res.data.values)
+
+    const validIds = (res.data.values || [])
       .flat()
       .map(id => parseInt(id))
-      .filter(Boolean)
+      .filter(id => !isNaN(id) && id > 100000)
 
     console.log('📋 Найдено chatId в таблице:', validIds)
     return validIds
@@ -42,6 +43,7 @@ async function getAllChatIds() {
     return []
   }
 }
+
 
 // === Разбор входного текста ===
 function parseLead(text) {
