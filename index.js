@@ -3,7 +3,9 @@ import express from 'express'
 import axios from 'axios'
 import { Telegraf } from 'telegraf'
 import { google } from 'googleapis'
+import fs from 'fs'
 
+// === Переменные окружения ===
 const {
   BOT_TOKEN,
   PUBLIC_URL,
@@ -18,24 +20,40 @@ if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK || !SPREADSHEET_ID) {
   process.exit(1)
 }
 
+// === Telegram и Express ===
 const bot = new Telegraf(BOT_TOKEN)
 const app = express()
 
 // === Авторизация Google Sheets ===
 let auth
 try {
-  const credentials = GOOGLE_CREDENTIALS
-    ? JSON.parse(GOOGLE_CREDENTIALS)
-    : JSON.parse(await import('fs').then(fs => fs.readFileSync('./service-account.json', 'utf8')))
+  let credentials
+
+  if (GOOGLE_CREDENTIALS) {
+    // Если ключ хранится в Environment
+    credentials = JSON.parse(GOOGLE_CREDENTIALS)
+    if (credentials.private_key) {
+      credentials.private_key = credentials.private_key.replace(/\\n/g, '\n')
+    }
+  } else {
+    // Если ключ лежит как файл service-account.json
+    const raw = fs.readFileSync('./service-account.json', 'utf8')
+    credentials = JSON.parse(raw)
+    if (credentials.private_key) {
+      credentials.private_key = credentials.private_key.replace(/\\n/g, '\n')
+    }
+  }
 
   auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
   })
+
   console.log('✅ Авторизация Google API успешна')
 } catch (err) {
   console.error('❌ Ошибка при инициализации Google API:', err.message)
 }
+
 const sheets = google.sheets({ version: 'v4', auth })
 
 // === Получение chatId из таблицы (колонка C) ===
@@ -45,7 +63,6 @@ async function getAllChatIds() {
       spreadsheetId: SPREADSHEET_ID,
       range: 'C:C'
     })
-
     const validIds = (res.data.values || [])
       .flat()
       .map(id => parseInt(id))
@@ -64,7 +81,7 @@ function parseLead(text) {
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
   if (parts.length < 4) return null
   const [bank, phoneRaw, account, sumRaw] = parts
-  const phone = phoneRaw.replace(/[^\d\+]/g, '') // <-- исправлено
+  const phone = phoneRaw.replace(/[^\d\+]/g, '')
   const sum = String(sumRaw).trim()
   return { bank, phone, account, sum }
 }
@@ -116,7 +133,6 @@ bot.on('text', async ctx => {
 
 // === Express сервер ===
 app.use(bot.webhookCallback('/telegram-webhook'))
-app.get('/telegram-webhook', (_, res) => res.send('OK')) // важно: чтобы Telegram видел ответ
 app.get('/', (_, res) => res.send('OK'))
 
 // === Запуск сервера ===
