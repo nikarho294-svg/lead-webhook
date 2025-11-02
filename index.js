@@ -2,17 +2,48 @@ import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
 import { Telegraf } from 'telegraf'
+import { google } from 'googleapis'
 
-const { BOT_TOKEN, PUBLIC_URL, CHATTERFY_WEBHOOK, PORT = 10000 } = process.env
+const { BOT_TOKEN, PUBLIC_URL, CHATTERFY_WEBHOOK, PORT = 10000, SPREADSHEET_ID } = process.env
 
-if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK) {
-  console.error('❌ Missing env vars. Check BOT_TOKEN, PUBLIC_URL, CHATTERFY_WEBHOOK.')
+if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK || !SPREADSHEET_ID) {
+  console.error('❌ Missing env vars. Check BOT_TOKEN, PUBLIC_URL, CHATTERFY_WEBHOOK, SPREADSHEET_ID.')
   process.exit(1)
 }
 
 const bot = new Telegraf(BOT_TOKEN)
+const app = express()
 
-// === Разбор сообщения пользователя ===
+// === Авторизация Google Sheets ===
+const auth = new google.auth.GoogleAuth({
+  keyFile: './service-account.json',
+  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
+})
+const sheets = google.sheets({ version: 'v4', auth })
+
+// === Получение chatId из таблицы (колонка C) ===
+async function getAllChatIds() {
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'C2:C1000' // читаем все строки после заголовка
+    })
+
+    const raw = res.data.values || []
+    const validIds = raw
+      .flat()
+      .map(id => parseInt(id))
+      .filter(Boolean)
+
+    console.log('📋 Найдено chatId в таблице:', validIds)
+    return validIds
+  } catch (err) {
+    console.error('❌ Ошибка при чтении Google Sheets:', err.message)
+    return []
+  }
+}
+
+// === Разбор входного текста ===
 function parseLead(text) {
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
   if (parts.length < 4) return null
@@ -39,30 +70,40 @@ bot.on('text', async ctx => {
   }
 
   const { bank, phone, account, sum } = parsed
-  const chatId = ctx.message.chat.id // Telegram ChatID
+  ctx.reply('⏳ Загружаю список пользователей из Google Sheets...')
 
-  // Формируем URL для запроса в Chatterfy
-  const url = `${CHATTERFY_WEBHOOK}?chatId=${chatId}` +
-              `&fields.bank%20name=${encodeURIComponent(bank)}` +
-              `&fields.number=${encodeURIComponent(phone)}` +
-              `&fields.account=${encodeURIComponent(account)}` +
-              `&fields.sum=${encodeURIComponent(sum)}`
-
-  try {
-    await axios.get(url, { timeout: 10000 })
-    await ctx.reply('✅ Данные успешно переданы в Chatterfy.')
-  } catch (err) {
-    console.error('Ошибка при отправке:', err.message)
-    await ctx.reply('❌ Не удалось передать данные в Chatterfy.')
+  const allChatIds = await getAllChatIds()
+  if (!allChatIds.length) {
+    return ctx.reply('⚠️ Не найдено ни одного Chat ID в Google Sheets.')
   }
+
+  ctx.reply(`📤 Найдено ${allChatIds.length} пользователей. Начинаю обновление...`)
+
+  let success = 0
+  for (const chatId of allChatIds) {
+    const url = `${CHATTERFY_WEBHOOK}?chatId=${chatId}` +
+                `&fields.bank%20name=${encodeURIComponent(bank)}` +
+                `&fields.number=${encodeURIComponent(phone)}` +
+                `&fields.account=${encodeURIComponent(account)}` +
+                `&fields.sum=${encodeURIComponent(sum)}`
+    try {
+      await axios.get(url)
+      console.log(`✅ Обновлён chatId: ${chatId}`)
+      success++
+    } catch (err) {
+      console.error(`❌ Ошибка для chatId ${chatId}:`, err.message)
+    }
+  }
+
+  ctx.reply(`✅ Успешно обновлено ${success} пользователей из ${allChatIds.length}.`)
 })
 
 // === Express сервер ===
-const app = express()
 app.use(bot.webhookCallback('/telegram-webhook'))
 app.get('/telegram-webhook', (_, res) => res.send('OK'))
 app.get('/', (_, res) => res.send('OK'))
 
+// === Запуск сервера ===
 app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`)
   const webhookUrl = `${PUBLIC_URL}/telegram-webhook`
