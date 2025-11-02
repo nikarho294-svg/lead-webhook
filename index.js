@@ -12,21 +12,17 @@ if (!BOT_TOKEN || !PUBLIC_URL || !CHATTERFY_WEBHOOK) {
 
 const bot = new Telegraf(BOT_TOKEN)
 
-// === Функция для разбора входящих сообщений ===
+// === Разбор сообщения пользователя ===
 function parseLead(text) {
-  // разделяем по | ; , и пробелам
   const parts = text.split(/[\|\;\,]\s*/).map(v => v.trim()).filter(Boolean)
   if (parts.length < 4) return null
-
   const [bank, phoneRaw, account, sumRaw] = parts
   const phone = phoneRaw.replace(/[^\d\+]/g, '')
   const sum = String(sumRaw).trim()
-
-  if (!bank || !phone || !account || !sum) return null
   return { bank, phone, account, sum }
 }
 
-// === Команда /start ===
+// === /start ===
 bot.start(ctx => {
   ctx.reply(
     'Привет! Отправь данные в формате:\n' +
@@ -35,7 +31,7 @@ bot.start(ctx => {
   )
 })
 
-// === Обработка всех текстовых сообщений ===
+// === Обработка текстовых сообщений ===
 bot.on('text', async ctx => {
   const parsed = parseLead(ctx.message.text)
   if (!parsed) {
@@ -43,41 +39,30 @@ bot.on('text', async ctx => {
   }
 
   const { bank, phone, account, sum } = parsed
+  const chatId = ctx.message.chat.id // Telegram ChatID
 
-  // === Формируем payload для Chatterfy ===
-  const payload = {
-    fields: {
-      "bank name": bank,
-      "number": phone,
-      "account": account,
-      "sum": sum
-    }
-  }
+  // Формируем URL для запроса в Chatterfy
+  const url = `${CHATTERFY_WEBHOOK}?chatId=${chatId}` +
+              `&fields.bank%20name=${encodeURIComponent(bank)}` +
+              `&fields.number=${encodeURIComponent(phone)}` +
+              `&fields.account=${encodeURIComponent(account)}` +
+              `&fields.sum=${encodeURIComponent(sum)}`
 
   try {
-    await axios.post(CHATTERFY_WEBHOOK, payload, { timeout: 10000 })
-    await ctx.reply('✅ Данные отправлены в Chatterfy.')
+    await axios.get(url, { timeout: 10000 })
+    await ctx.reply('✅ Данные успешно переданы в Chatterfy.')
   } catch (err) {
     console.error('Ошибка при отправке:', err.message)
     await ctx.reply('❌ Не удалось передать данные в Chatterfy.')
   }
 })
 
-// === Запуск express-сервера ===
+// === Express сервер ===
 const app = express()
-
-// POST-запросы от Telegram
 app.use(bot.webhookCallback('/telegram-webhook'))
-
-// GET-запрос — чтобы Telegram не получал 404
-app.get('/telegram-webhook', (req, res) => {
-  res.status(200).send('OK')
-})
-
-// Проверка, что сервер жив
+app.get('/telegram-webhook', (_, res) => res.send('OK'))
 app.get('/', (_, res) => res.send('OK'))
 
-// === Запуск сервера ===
 app.listen(PORT, async () => {
   console.log(`✅ Server running on port ${PORT}`)
   const webhookUrl = `${PUBLIC_URL}/telegram-webhook`
